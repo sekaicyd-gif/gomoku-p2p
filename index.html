@@ -206,6 +206,14 @@ canvas.addEventListener('click', (e) => {
 // ---------- PeerJS ----------
 let peer, conn, myRematch = false, oppRematch = false;
 
+// ICE servers: Google STUN + free OpenRelay TURN (fallback when p2p is blocked by NAT)
+const ICE_CONFIG = { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+]};
+
 function send(obj) { if (conn && conn.open) conn.send(obj); }
 
 function newConn(c, isHost) {
@@ -261,7 +269,7 @@ function genCode() {
 document.getElementById('createBtn').addEventListener('click', () => {
   const code = genCode();
   lobbyMsg.textContent = '正在创建房间…';
-  peer = new Peer('gomoku-p2p-' + code);
+  peer = new Peer('gomoku-p2p-' + code, { config: ICE_CONFIG, debug: 0 });
   peer.on('open', () => {
     roomCodeEl.textContent = code;
     roomCodeEl.classList.remove('hidden');
@@ -276,7 +284,7 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   const code = document.getElementById('codeInput').value.trim().toUpperCase();
   if (!code) { lobbyMsg.textContent = '请输入房间码'; return; }
   lobbyMsg.textContent = '正在连接房间 ' + code + ' …';
-  peer = new Peer();
+  peer = new Peer({ config: ICE_CONFIG, debug: 0 });
   peer.on('open', () => { newConn(peer.connect('gomoku-p2p-' + code, { reliable: true }), false); });
   peer.on('error', (e) => { lobbyMsg.textContent = '连接失败:' + e.type; });
 });
