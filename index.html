@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>联机五子棋 · 点对点</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --brand:#38bdf8; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg) 70%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 24px;
+  }
+  h1 { font-size: 26px; letter-spacing: 2px; }
+  h1 .dot { color: var(--brand); }
+  .status {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid #334155; border-radius: 12px;
+    padding: 10px 18px; font-size: 15px; min-height: 44px;
+  }
+  .dot-live { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+  .dot-off  { width: 10px; height: 10px; border-radius: 50%; background: #f87171; }
+  .dot-wait { width: 10px; height: 10px; border-radius: 50%; background: #fbbf24; }
+  .chip { display:inline-block; width:16px; height:16px; border-radius:50%; vertical-align:-3px; margin:0 3px; }
+  .chip-b { background:#111; border:1px solid #555; }
+  .chip-w { background:#f8fafc; border:1px solid #94a3b8; }
+  .board-wrap {
+    background: var(--panel); padding: 18px; border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.4); border: 1px solid #334155;
+  }
+  canvas { display: block; border-radius: 10px; cursor: pointer; }
+  button {
+    background: var(--brand); color:#06202e; border: none; border-radius: 10px;
+    padding: 10px 26px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-wrap { display:flex; gap:10px; }
+  .hidden { display: none; }
+  /* lobby overlay */
+  #lobby {
+    position: fixed; inset: 0; background: rgba(5,10,20,.92);
+    display: flex; align-items: center; justify-content: center; z-index: 10;
+  }
+  #lobby .card {
+    background: var(--panel); border: 1px solid #334155; border-radius: 16px;
+    padding: 32px 36px; width: min(92vw, 420px); text-align: center;
+  }
+  #lobby h2 { margin-bottom: 18px; }
+  #lobby .row { display: flex; gap: 12px; justify-content: center; margin-bottom: 18px; flex-wrap: wrap; }
+  #lobby input {
+    background:#0b1220; border:1px solid #334155; color:var(--text); border-radius:10px;
+    padding:10px 14px; font-size:16px; width:160px; text-align:center; letter-spacing:2px;
+    text-transform: uppercase;
+  }
+  #lobby .hint { color: var(--muted); font-size: 13px; margin-top: 10px; line-height: 1.6; }
+  #roomCode { font-size: 34px; letter-spacing: 6px; color: var(--brand); font-weight: 700; margin: 8px 0; }
+</style>
+</head>
+<body>
+  <h1>联机<span class="dot">五子棋</span></h1>
+
+  <div class="status">
+    <span id="connDot" class="dot-off"></span>
+    <span id="statusText">准备开始</span>
+  </div>
+
+  <div class="board-wrap"><canvas id="board" width="620" height="620"></canvas></div>
+
+  <div class="btn-wrap">
+    <button id="rematchBtn" class="hidden" disabled>再来一局</button>
+  </div>
+
+  <!-- lobby -->
+  <div id="lobby">
+    <div class="card">
+      <h2>开始一局</h2>
+      <div class="row">
+        <button id="createBtn">创建房间</button>
+        <button id="joinBtn">加入房间</button>
+      </div>
+      <div class="row">
+        <input id="codeInput" placeholder="房间码" maxlength="5" />
+        <button id="connectBtn">连接</button>
+      </div>
+      <div id="lobbyMsg" class="hint">点「创建房间」当房主(执黑先手)，或输入好友的房间码加入。</div>
+      <div id="roomCode" class="hidden"></div>
+      <div class="hint" id="shareHint"></div>
+    </div>
+  </div>
+
+<script src="peerjs.min.js"></script>
+<script>
+const SIZE = 15;
+const PX = 620;
+const MARGIN = 30;
+const CELL = (PX - MARGIN * 2) / (SIZE - 1);
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+let myColor = null, turn = 'black', gameOver = false, winLine = [], lastMove = null, playing = false, connected = false;
+
+const connDot = document.getElementById('connDot');
+const statusText = document.getElementById('statusText');
+const lobby = document.getElementById('lobby');
+const lobbyMsg = document.getElementById('lobbyMsg');
+const roomCodeEl = document.getElementById('roomCode');
+const shareHint = document.getElementById('shareHint');
+
+function setConn(state, text) {
+  connDot.className = state;
+  statusText.innerHTML = text;
+}
+function chips(t){ const c = myColor==='black'?'<span class="chip chip-b"></span>':(myColor==='white'?'<span class="chip chip-w"></span>':''); return c+t; }
+
+// ---------- drawing (same as tested version) ----------
+function drawBoard() {
+  const g = ctx.createLinearGradient(0, 0, PX, PX);
+  g.addColorStop(0, '#e8c07d'); g.addColorStop(1, '#d9a35c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, PX, PX);
+  ctx.strokeStyle = 'rgba(60,40,10,.55)'; ctx.lineWidth = 1;
+  for (let i = 0; i < SIZE; i++) {
+    const p = MARGIN + i * CELL;
+    ctx.beginPath(); ctx.moveTo(MARGIN, p); ctx.lineTo(PX - MARGIN, p); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p, MARGIN); ctx.lineTo(p, PX - MARGIN); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(60,40,10,.7)';
+  for (const [r, c] of [[3,3],[3,11],[11,3],[11,11],[7,7]]) {
+    const x = MARGIN + c * CELL, y = MARGIN + r * CELL;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  const winSet = new Set(winLine.map(([r, c]) => r + ',' + c));
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    const v = board[r][c]; if (!v) continue;
+    drawStone(MARGIN + c * CELL, MARGIN + r * CELL, v, winSet.has(r + ',' + c));
+  }
+  if (lastMove && !gameOver) {
+    const [r, c] = lastMove;
+    ctx.strokeStyle = board[r][c] === 'black' ? '#fff' : '#000'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(MARGIN + c * CELL, MARGIN + r * CELL, 9, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+function drawStone(x, y, color, isWin) {
+  if (isWin) { ctx.fillStyle = 'rgba(255,215,80,.5)'; ctx.beginPath(); ctx.arc(x, y, CELL * 0.5, 0, Math.PI * 2); ctx.fill(); }
+  const rr = CELL * 0.42;
+  const grad = ctx.createRadialGradient(x - 3, y - 3, rr * 0.2, x, y, rr);
+  if (color === 'black') { grad.addColorStop(0, '#555'); grad.addColorStop(1, '#000'); }
+  else { grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#b9c0c9'); }
+  ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+// ---------- win detection (same as tested game.js) ----------
+function checkWin(b, r, c, color) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr, dc] of dirs) {
+    let line = [[r, c]];
+    for (let k = 1; k < 5; k++) { const nr=r-dr*k, nc=c-dc*k; if (nr<0||nr>=SIZE||nc<0||nc>=SIZE||b[nr][nc]!==color) break; line.unshift([nr,nc]); }
+    for (let k = 1; k < 5; k++) { const nr=r+dr*k, nc=c+dc*k; if (nr<0||nr>=SIZE||nc<0||nc>=SIZE||b[nr][nc]!==color) break; line.push([nr,nc]); }
+    if (line.length >= 5) return line;
+  }
+  return null;
+}
+function stoneCount(){ let n=0; for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++)if(board[r][c])n++; return n; }
+function currentTurn(){ return (stoneCount() % 2 === 0) ? 'black' : 'white'; }
+
+// ---------- move + game flow ----------
+function applyMove(row, col, color, fromRemote) {
+  board[row][col] = color;
+  lastMove = [row, col];
+  const w = checkWin(board, row, col, color);
+  drawBoard();
+  if (w) {
+    gameOver = true; winLine = w; drawBoard();
+    setConn('dot-live', chips(color === myColor ? '🏆 你赢了！' : '你输了，再接再厉'));
+    document.getElementById('rematchBtn').classList.remove('hidden');
+    document.getElementById('rematchBtn').disabled = false;
+    return;
+  }
+  if (stoneCount() === SIZE * SIZE) { gameOver = true; setConn('dot-live', '平局！'); document.getElementById('rematchBtn').classList.remove('hidden'); return; }
+  turn = currentTurn();
+  if (!fromRemote) return;
+  setConn('dot-live', chips(myColor === turn ? '轮到你落子' : '等待对方落子…'));
+}
+
+canvas.addEventListener('click', (e) => {
+  if (!playing || gameOver || !connected) return;
+  if (myColor !== currentTurn()) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (PX / rect.width);
+  const my = (e.clientY - rect.top) * (PX / rect.height);
+  const col = Math.round((mx - MARGIN) / CELL);
+  const row = Math.round((my - MARGIN) / CELL);
+  if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return;
+  if (board[row][col]) return;
+  applyMove(row, col, myColor, false);
+  if (!gameOver) setConn('dot-live', '等待对方落子…');
+  send({ type: 'move', row, col });
+});
+
+// ---------- PeerJS ----------
+let peer, conn, myRematch = false, oppRematch = false;
+
+function send(obj) { if (conn && conn.open) conn.send(obj); }
+
+function newConn(c, isHost) {
+  conn = c;
+  conn.on('open', () => {
+    connected = true;
+    if (isHost) {
+      myColor = 'black';
+      send({ type: 'init' });
+      startGame();
+      lobby.classList.add('hidden');
+    }
+  });
+  conn.on('data', (d) => {
+    if (d.type === 'init') {          // client receives
+      myColor = 'white';
+      connected = true;
+      startGame();
+      lobby.classList.add('hidden');
+    } else if (d.type === 'move') {
+      const color = (stoneCount() % 2 === 0) ? 'black' : 'white'; // moves alternate strictly; infer by parity
+      applyMove(d.row, d.col, color, true);
+    } else if (d.type === 'rematch') {
+      oppRematch = true;
+      tryRematch();
+    }
+  });
+  conn.on('close', () => {
+    connected = false; playing = false;
+    setConn('dot-off', '对方离开/断开，请刷新重新匹配');
+    clearBoard(); drawBoard();
+  });
+  conn.on('error', () => { setConn('dot-off', '连接出错'); });
+}
+
+function startGame() {
+  playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
+  clearBoard(); drawBoard();
+  setConn('dot-live', chips(myColor === 'black' ? '你是黑子·先手' : '你是白子·对方先手'));
+  document.getElementById('rematchBtn').classList.add('hidden');
+}
+
+function clearBoard() {
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) board[r][c] = null;
+}
+
+// ---------- lobby buttons ----------
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = ''; for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+document.getElementById('createBtn').addEventListener('click', () => {
+  const code = genCode();
+  lobbyMsg.textContent = '正在创建房间…';
+  peer = new Peer('gomoku-p2p-' + code);
+  peer.on('open', () => {
+    roomCodeEl.textContent = code;
+    roomCodeEl.classList.remove('hidden');
+    shareHint.innerHTML = '把这个<b>房间码</b>发给好友，让对方「加入房间」并输入。<br>你是房主，执黑先手。';
+    lobbyMsg.textContent = '房间已创建，等待好友加入…';
+    setConn('dot-wait', '房间已创建，等待对方加入');
+  });
+  peer.on('connection', (c) => newConn(c, true));
+  peer.on('error', (e) => { lobbyMsg.textContent = '创建失败:' + e.type + '，请换一个码重试'; });
+});
+document.getElementById('joinBtn').addEventListener('click', () => {
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
+  if (!code) { lobbyMsg.textContent = '请输入房间码'; return; }
+  lobbyMsg.textContent = '正在连接房间 ' + code + ' …';
+  peer = new Peer();
+  peer.on('open', () => { newConn(peer.connect('gomoku-p2p-' + code, { reliable: true }), false); });
+  peer.on('error', (e) => { lobbyMsg.textContent = '连接失败:' + e.type; });
+});
+document.getElementById('connectBtn').addEventListener('click', () => document.getElementById('joinBtn').click());
+
+const rematchBtn = document.getElementById('rematchBtn');
+rematchBtn.addEventListener('click', () => {
+  myRematch = true;
+  rematchBtn.disabled = true;
+  send({ type: 'rematch' });
+  tryRematch();
+});
+function tryRematch() {
+  if (myRematch && oppRematch) { myRematch = oppRematch = false; startGame(); }
+}
+
+drawBoard();
+window.addEventListener('unhandledrejection', e => console.warn(e.reason));
+</script>
+</body>
+</html>
