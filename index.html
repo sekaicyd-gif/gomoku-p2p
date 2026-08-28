@@ -69,37 +69,28 @@
     <span id="statusText">准备开始</span>
   </div>
 
-  <div class="btn-wrap">
-    <button id="mpBtn" style="background:#a855f7">联机对战（好友加入）</button>
+  <!-- 联机控制区：普通页面流，不遮挡棋盘 -->
+  <div class="board-wrap" style="padding:14px 18px;">
+    <div class="row">
+      <button id="createBtn">创建房间</button>
+      <button id="joinBtn">加入房间</button>
+      <button id="soloBtn" style="background:#22c55e">单人练习</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <input id="codeInput" placeholder="房间码" maxlength="5" />
+      <button id="connectBtn">连接</button>
+      <button id="selfTestBtn" style="background:#64748b">自检</button>
+    </div>
+    <div id="lobbyMsg" class="hint">玩法：点「单人练习」直接和电脑下；和朋友玩：你「创建房间」→ 把出现的房间码发给朋友 → 朋友「加入房间」输入该码。</div>
+    <div id="roomCode" class="hidden"></div>
+    <div class="hint" id="shareHint"></div>
+    <div id="selfTestOut" class="hint" style="text-align:left; margin-top:8px;"></div>
   </div>
 
   <div class="board-wrap"><canvas id="board" width="620" height="620"></canvas></div>
 
   <div class="btn-wrap">
     <button id="rematchBtn" class="hidden" disabled>再来一局</button>
-  </div>
-
-  <!-- lobby -->
-  <div id="lobby" class="hidden">
-    <div class="card">
-      <h2>联机对战</h2>
-      <div class="row">
-        <button id="createBtn">创建房间</button>
-        <button id="joinBtn">加入房间</button>
-      </div>
-      <div class="row">
-        <input id="codeInput" placeholder="房间码" maxlength="5" />
-        <button id="connectBtn">连接</button>
-      </div>
-      <div class="row">
-        <button id="selfTestBtn" style="background:#64748b">先自检（诊断网络）</button>
-        <button id="soloBtn" style="background:#22c55e">单人练习（先试玩）</button>
-      </div>
-      <div id="selfTestOut" class="hint" style="text-align:left; margin-top:8px;"></div>
-      <div id="lobbyMsg" class="hint">点「创建房间」当房主(执黑先手)，或输入好友的房间码加入。</div>
-      <div id="roomCode" class="hidden"></div>
-      <div class="hint" id="shareHint"></div>
-    </div>
   </div>
 
 <script>
@@ -126,7 +117,6 @@ let myColor = null, turn = 'black', gameOver = false, winLine = [], lastMove = n
 
 const connDot = document.getElementById('connDot');
 const statusText = document.getElementById('statusText');
-const lobby = document.getElementById('lobby');
 const lobbyMsg = document.getElementById('lobbyMsg');
 const roomCodeEl = document.getElementById('roomCode');
 const shareHint = document.getElementById('shareHint');
@@ -246,7 +236,6 @@ function newConn(c, isHost) {
       myColor = 'black';
       send({ type: 'init' });
       startGame();
-      lobby.classList.add('hidden');
     }
   });
   conn.on('data', (d) => {
@@ -254,7 +243,6 @@ function newConn(c, isHost) {
       myColor = 'white';
       connected = true;
       startGame();
-      lobby.classList.add('hidden');
     } else if (d.type === 'move') {
       const color = (stoneCount() % 2 === 0) ? 'black' : 'white'; // moves alternate strictly; infer by parity
       applyMove(d.row, d.col, color, true);
@@ -285,7 +273,6 @@ function startSolo() {
   solo = true;
   playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
   clearBoard(); drawBoard();
-  lobby.classList.add('hidden');
   setConn('dot-live', '单人练习：你执黑先手（vs 简单电脑）');
   document.getElementById('rematchBtn').classList.add('hidden');
 }
@@ -409,12 +396,7 @@ function tryRematch() {
   if (myRematch && oppRematch) { myRematch = oppRematch = false; startGame(); }
 }
 
-// 打开即玩：自动进入单人练习（点棋盘即可落子）；「联机对战」按钮再打开联机面板
-document.getElementById('mpBtn').addEventListener('click', () => {
-  lobby.classList.toggle('hidden');
-});
-lobby.addEventListener('click', (e) => { if (e.target === lobby) lobby.classList.add('hidden'); });
-
+// 打开即玩：自动进入单人练习，点棋盘即可落子（联机按钮在棋盘上方，永不遮挡）
 startSolo();
 window.addEventListener('unhandledrejection', e => console.warn(e.reason));
 window.addEventListener('error', (e) => {
