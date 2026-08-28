@@ -89,6 +89,7 @@
       </div>
       <div class="row">
         <button id="selfTestBtn" style="background:#64748b">先自检（诊断网络）</button>
+        <button id="soloBtn" style="background:#22c55e">单人练习（先试玩）</button>
       </div>
       <div id="selfTestOut" class="hint" style="text-align:left; margin-top:8px;"></div>
       <div id="lobbyMsg" class="hint">点「创建房间」当房主(执黑先手)，或输入好友的房间码加入。</div>
@@ -117,7 +118,7 @@ const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 
 const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
-let myColor = null, turn = 'black', gameOver = false, winLine = [], lastMove = null, playing = false, connected = false;
+let myColor = null, turn = 'black', gameOver = false, winLine = [], lastMove = null, playing = false, connected = false, solo = false;
 
 const connDot = document.getElementById('connDot');
 const statusText = document.getElementById('statusText');
@@ -203,7 +204,8 @@ function applyMove(row, col, color, fromRemote) {
 }
 
 canvas.addEventListener('click', (e) => {
-  if (!playing || gameOver || !connected) return;
+  if (!playing || gameOver) return;
+  if (!connected && !solo) return;
   if (myColor !== currentTurn()) return;
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (PX / rect.width);
@@ -213,16 +215,18 @@ canvas.addEventListener('click', (e) => {
   if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return;
   if (board[row][col]) return;
   applyMove(row, col, myColor, false);
-  if (!gameOver) setConn('dot-live', '等待对方落子…');
+  if (!gameOver) setConn('dot-live', solo ? '你已落子，电脑思考中…' : '等待对方落子…');
+  if (solo) { setTimeout(aiMove, 350); return; }
   send({ type: 'move', row, col });
 });
 
 // ---------- PeerJS ----------
 let peer, conn, myRematch = false, oppRematch = false;
 
-// ICE servers: Google STUN + free OpenRelay TURN (fallback when p2p is blocked by NAT)
+// ICE servers: Google STUN + PeerJS自家TURN + OpenRelay TURN (多层保险，跨网互通)
 const ICE_CONFIG = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
   { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
@@ -264,10 +268,34 @@ function newConn(c, isHost) {
 }
 
 function startGame() {
+  solo = false;
   playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
   clearBoard(); drawBoard();
   setConn('dot-live', chips(myColor === 'black' ? '你是黑子·先手' : '你是白子·对方先手'));
   document.getElementById('rematchBtn').classList.add('hidden');
+}
+
+// ---------- 单人练习（vs 简单电脑） ----------
+function startSolo() {
+  myColor = 'black';
+  solo = true;
+  playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
+  clearBoard(); drawBoard();
+  lobby.classList.add('hidden');
+  setConn('dot-live', '单人练习：你执黑先手（vs 简单电脑）');
+  document.getElementById('rematchBtn').classList.add('hidden');
+}
+function aiMove() {
+  if (!solo || gameOver || !playing) return;
+  const moves = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!board[r][c]) moves.push([r, c]);
+  if (!moves.length) return;
+  let pick = null;
+  for (const [r, c] of moves) { board[r][c] = 'white'; if (checkWin(board, r, c, 'white')) pick = [r, c]; board[r][c] = null; if (pick) break; }
+  if (!pick) for (const [r, c] of moves) { board[r][c] = 'black'; if (checkWin(board, r, c, 'black')) pick = [r, c]; board[r][c] = null; if (pick) break; }
+  if (!pick) pick = moves[Math.floor(Math.random() * moves.length)];
+  applyMove(pick[0], pick[1], 'white', false);
+  if (!gameOver) setConn('dot-live', '单人练习：轮到你落子');
 }
 
 function clearBoard() {
@@ -363,9 +391,11 @@ function selfTest() {
   });
 }
 document.getElementById('selfTestBtn').addEventListener('click', selfTest);
+document.getElementById('soloBtn').addEventListener('click', startSolo);
 
 const rematchBtn = document.getElementById('rematchBtn');
 rematchBtn.addEventListener('click', () => {
+  if (solo) { startSolo(); return; }
   myRematch = true;
   rematchBtn.disabled = true;
   send({ type: 'rematch' });
