@@ -69,6 +69,10 @@
     <span id="statusText">准备开始</span>
   </div>
 
+  <div class="btn-wrap">
+    <button id="mpBtn" style="background:#a855f7">联机对战（好友加入）</button>
+  </div>
+
   <div class="board-wrap"><canvas id="board" width="620" height="620"></canvas></div>
 
   <div class="btn-wrap">
@@ -76,9 +80,9 @@
   </div>
 
   <!-- lobby -->
-  <div id="lobby">
+  <div id="lobby" class="hidden">
     <div class="card">
-      <h2>开始一局</h2>
+      <h2>联机对战</h2>
       <div class="row">
         <button id="createBtn">创建房间</button>
         <button id="joinBtn">加入房间</button>
@@ -405,7 +409,13 @@ function tryRematch() {
   if (myRematch && oppRematch) { myRematch = oppRematch = false; startGame(); }
 }
 
-drawBoard();
+// 打开即玩：自动进入单人练习（点棋盘即可落子）；「联机对战」按钮再打开联机面板
+document.getElementById('mpBtn').addEventListener('click', () => {
+  lobby.classList.toggle('hidden');
+});
+lobby.addEventListener('click', (e) => { if (e.target === lobby) lobby.classList.add('hidden'); });
+
+startSolo();
 window.addEventListener('unhandledrejection', e => console.warn(e.reason));
 window.addEventListener('error', (e) => {
   try { setConn('dot-off', '页面出错: ' + (e.message || '未知错误')); } catch (_) {}
