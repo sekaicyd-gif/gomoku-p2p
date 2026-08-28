@@ -283,24 +283,40 @@ function genCode() {
 document.getElementById('createBtn').addEventListener('click', () => {
   const code = genCode();
   lobbyMsg.textContent = '正在创建房间…';
+  document.getElementById('createBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = true;
   peer = new Peer('gomoku-p2p-' + code, { config: ICE_CONFIG, debug: 0 });
   peer.on('open', () => {
     roomCodeEl.textContent = code;
     roomCodeEl.classList.remove('hidden');
-    shareHint.innerHTML = '把这个<b>房间码</b>发给好友，让对方「加入房间」并输入。<br>你是房主，执黑先手。';
-    lobbyMsg.textContent = '房间已创建，等待好友加入…';
+    shareHint.innerHTML = '把这个<b>房间码(如 FNXJ)</b>发给好友，让好友打开同一链接 →点「加入房间」→输入这个码→点「连接」。<br>你是房主，执黑先手。';
+    lobbyMsg.textContent = '✅ 房间已创建，等待好友加入…';
     setConn('dot-wait', '房间已创建，等待对方加入');
   });
   peer.on('connection', (c) => newConn(c, true));
-  peer.on('error', (e) => { lobbyMsg.textContent = '创建失败:' + e.type + '，请换一个码重试'; });
+  peer.on('error', (e) => {
+    lobbyMsg.textContent = '⚠️ 创建失败:' + e.type + '，请换一个码重试';
+    document.getElementById('createBtn').disabled = false;
+    document.getElementById('joinBtn').disabled = false;
+  });
 });
 document.getElementById('joinBtn').addEventListener('click', () => {
   const code = document.getElementById('codeInput').value.trim().toUpperCase();
-  if (!code) { lobbyMsg.textContent = '请输入房间码'; return; }
+  if (!code) { lobbyMsg.textContent = '请输入房间码（请在创建者屏幕上查看）'; return; }
   lobbyMsg.textContent = '正在连接房间 ' + code + ' …';
+  document.getElementById('createBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = true;
   peer = new Peer({ config: ICE_CONFIG, debug: 0 });
   peer.on('open', () => { newConn(peer.connect('gomoku-p2p-' + code, { reliable: true }), false); });
-  peer.on('error', (e) => { lobbyMsg.textContent = '连接失败:' + e.type; });
+  peer.on('error', (e) => {
+    if (e.type === 'peer-unavailable') {
+      lobbyMsg.textContent = '❌ 没有找到房间「' + code + '」：码打错了，或对方还没创建/已关闭页面。请确认后用创建者屏幕上的码重试。';
+    } else {
+      lobbyMsg.textContent = '⚠️ 连接失败:' + e.type;
+    }
+    document.getElementById('createBtn').disabled = false;
+    document.getElementById('joinBtn').disabled = false;
+  });
 });
 document.getElementById('connectBtn').addEventListener('click', () => document.getElementById('joinBtn').click());
 
