@@ -87,6 +87,10 @@
         <input id="codeInput" placeholder="房间码" maxlength="5" />
         <button id="connectBtn">连接</button>
       </div>
+      <div class="row">
+        <button id="selfTestBtn" style="background:#64748b">先自检（诊断网络）</button>
+      </div>
+      <div id="selfTestOut" class="hint" style="text-align:left; margin-top:8px;"></div>
       <div id="lobbyMsg" class="hint">点「创建房间」当房主(执黑先手)，或输入好友的房间码加入。</div>
       <div id="roomCode" class="hidden"></div>
       <div class="hint" id="shareHint"></div>
@@ -299,6 +303,50 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   peer.on('error', (e) => { lobbyMsg.textContent = '连接失败:' + e.type; });
 });
 document.getElementById('connectBtn').addEventListener('click', () => document.getElementById('joinBtn').click());
+
+// ---------- 一键自检：本机起两个 Peer 互联，逐环验证 ----------
+const selfTestOut = document.getElementById('selfTestOut');
+function selfTest() {
+  selfTestOut.innerHTML = '<b>自检中…</b> 1) 连接信令服务器 2) 建立数据通道 3) 双向收发';
+  const steps = [];
+  const done = (html) => { selfTestOut.innerHTML = html; clearTimeout(to); try { hp && hp.destroy(); cp && cp.destroy(); } catch (_) {} };
+  const to = setTimeout(() => done('❌ <b>自检超时（30 秒）</b>：网络连不上牵线服务器。<br>详情：' + (steps.join('；') || '无响应')), 30000);
+  const hid = 'gomoku-selftest-' + genCode() + Math.floor(Math.random() * 90 + 10);
+  let hp = null, cp = null;
+  hp = new Peer(hid, { config: ICE_CONFIG, debug: 0 });
+  hp.on('open', () => {
+    steps.push('信令服务器已连接 ✓');
+    selfTestOut.innerHTML = '<b>自检中…</b><br>' + steps[0] + '<br>正在建立数据通道…';
+    cp = new Peer({ config: ICE_CONFIG, debug: 0 });
+    cp.on('open', () => {
+      const c = cp.connect(hid, { reliable: true });
+      c.on('open', () => {
+        steps.push('数据通道已建立 ✓');
+        selfTestOut.innerHTML = '<b>自检中…</b><br>' + steps.join('<br>') + '<br>正在双向通信…';
+        const t0 = Date.now();
+        c.send({ t: 'ping', ts: t0 });
+      });
+      c.on('data', (d) => {
+        if (d.t === 'pong') {
+          const rtt = Date.now() - d.ts;
+          steps.push('双向收发正常 ✓（往返约 ' + rtt + 'ms）');
+          done('✅ <b>自检全部通过！</b> 你本机网络与游戏链路完全正常。<br>' + steps.join('<br>') + '<br><br>👉 如果联机仍失败，问题在<b>对方的网络</b>，或操作步骤不对（对方也要打开链接并点「加入房间」）。');
+        }
+      });
+      c.on('error', (e) => done('❌ 数据通道错误: ' + (e.message || e.type)));
+    });
+    cp.on('error', (e) => done('❌ 对方Peer错误: ' + e.type + (e.message ? ' - ' + e.message : '')));
+  });
+  hp.on('connection', (c) => {
+    c.on('data', (d) => { if (d.t === 'ping') { try { c.send({ t: 'pong', ts: d.ts }); } catch (_) {} } });
+    c.on('error', () => done('❌ 主机端数据通道错误'));
+  });
+  hp.on('error', (e) => {
+    if (e.type === 'unavailable-id') { try { hp.destroy(); } catch (_) {} selfTest(); return; }
+    done('❌ <b>信令连接失败</b>：' + e.type + (e.message ? ' - ' + e.message : '') + '<br>说明：你这边网络连不上牵线服务器 0.peerjs.com（可能是网络网关拦截）。');
+  });
+}
+document.getElementById('selfTestBtn').addEventListener('click', selfTest);
 
 const rematchBtn = document.getElementById('rematchBtn');
 rematchBtn.addEventListener('click', () => {
