@@ -58,6 +58,8 @@
     text-transform: uppercase;
   }
   #lobby .hint { color: var(--muted); font-size: 13px; margin-top: 10px; line-height: 1.6; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 10px; line-height: 1.6; }
+  .score { color: var(--brand); font-size: 15px; font-weight: 600; }
   #roomCode { font-size: 34px; letter-spacing: 6px; color: var(--brand); font-weight: 700; margin: 8px 0; }
 </style>
 </head>
@@ -85,6 +87,10 @@
     <div id="roomCode" class="hidden"></div>
     <div class="hint" id="shareHint"></div>
     <div id="selfTestOut" class="hint" style="text-align:left; margin-top:8px;"></div>
+    <div class="row" style="margin-top:10px;align-items:center;justify-content:center;">
+      <span id="scorePanel" class="score">我：胜0 负0 平0（0分）｜ 对方：胜0 负0 平0（0分）</span>
+      <button id="resetScoreBtn" style="background:#f59e0b;padding:6px 14px;font-size:13px">清零</button>
+    </div>
   </div>
 
   <div class="board-wrap"><canvas id="board" width="620" height="620"></canvas></div>
@@ -126,6 +132,34 @@ function setConn(state, text) {
   statusText.innerHTML = text;
 }
 function chips(t){ const c = myColor==='black'?'<span class="chip chip-b"></span>':(myColor==='white'?'<span class="chip chip-w"></span>':''); return c+t; }
+
+// ---------- 计分系统（本地持久化 + 联机同步对方战绩） ----------
+const SCORE_KEY = 'gomokuP2pScore_v1';
+let score = { me: { w: 0, d: 0, l: 0 } };     // 我的战绩
+let oppScore = { w: 0, d: 0, l: 0 };          // 对方战绩（联机同步）
+let scoredGame = false;                        // 本局是否已计分（防重复）
+
+function loadScore() {
+  try { const s = JSON.parse(localStorage.getItem(SCORE_KEY)); if (s && s.me) score = s; } catch (e) {}
+}
+function saveScore() { try { localStorage.setItem(SCORE_KEY, JSON.stringify(score)); } catch (e) {} }
+function pts(x) { return x.w * 2 + x.d; }
+function renderScore() {
+  const el = document.getElementById('scorePanel');
+  if (el) el.innerHTML = '我：胜' + score.me.w + ' 负' + score.me.l + ' 平' + score.me.d + '（' + pts(score.me) + '分）｜ 对方：胜' + oppScore.w + ' 负' + oppScore.l + ' 平' + oppScore.d + '（' + pts(oppScore) + '分）';
+}
+function addResult(res) {   // 'win' | 'loss' | 'draw'
+  scoredGame = true;
+  if (res === 'win') score.me.w++; else if (res === 'draw') score.me.d++; else score.me.l++;
+  saveScore(); renderScore(); sendScore();
+}
+function sendScore() { send({ type: 'score', w: score.me.w, l: score.me.l, d: score.me.d }); }
+loadScore(); renderScore();
+document.getElementById('resetScoreBtn').addEventListener('click', () => {
+  score = { me: { w: 0, d: 0, l: 0 } };
+  oppScore = { w: 0, d: 0, l: 0 };
+  saveScore(); renderScore(); sendScore();
+});
 
 // ---------- drawing (same as tested version) ----------
 function drawBoard() {
@@ -189,9 +223,10 @@ function applyMove(row, col, color, fromRemote) {
     setConn('dot-live', chips(color === myColor ? '🏆 你赢了！' : '你输了，再接再厉'));
     document.getElementById('rematchBtn').classList.remove('hidden');
     document.getElementById('rematchBtn').disabled = false;
+    if (!scoredGame) { addResult(color === myColor ? 'win' : 'loss'); }
     return;
   }
-  if (stoneCount() === SIZE * SIZE) { gameOver = true; setConn('dot-live', '平局！'); document.getElementById('rematchBtn').classList.remove('hidden'); return; }
+  if (stoneCount() === SIZE * SIZE) { gameOver = true; setConn('dot-live', '平局！'); document.getElementById('rematchBtn').classList.remove('hidden'); if (!scoredGame) addResult('draw'); return; }
   turn = currentTurn();
   if (!fromRemote) return;
   setConn('dot-live', chips(myColor === turn ? '轮到你落子' : '等待对方落子…'));
@@ -235,6 +270,7 @@ function newConn(c, isHost) {
     if (isHost) {
       myColor = 'black';
       send({ type: 'init' });
+      sendScore();
       startGame();
     }
   });
@@ -242,6 +278,7 @@ function newConn(c, isHost) {
     if (d.type === 'init') {          // client receives
       myColor = 'white';
       connected = true;
+      sendScore();
       startGame();
     } else if (d.type === 'move') {
       const color = (stoneCount() % 2 === 0) ? 'black' : 'white'; // moves alternate strictly; infer by parity
@@ -249,6 +286,9 @@ function newConn(c, isHost) {
     } else if (d.type === 'rematch') {
       oppRematch = true;
       tryRematch();
+    } else if (d.type === 'score') {
+      oppScore = { w: d.w || 0, l: d.l || 0, d: d.d || 0 };
+      renderScore();
     }
   });
   conn.on('close', () => {
@@ -261,6 +301,7 @@ function newConn(c, isHost) {
 
 function startGame() {
   solo = false;
+  scoredGame = false;
   playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
   clearBoard(); drawBoard();
   setConn('dot-live', chips(myColor === 'black' ? '你是黑子·先手' : '你是白子·对方先手'));
@@ -271,6 +312,7 @@ function startGame() {
 function startSolo() {
   myColor = 'black';
   solo = true;
+  scoredGame = false;
   playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
   clearBoard(); drawBoard();
   setConn('dot-live', '单人练习：你执黑先手（vs 简单电脑）');
