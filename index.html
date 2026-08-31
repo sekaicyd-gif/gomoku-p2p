@@ -103,6 +103,13 @@
       <button id="connectBtn">连接</button>
       <button id="selfTestBtn" style="background:#64748b">自检</button>
     </div>
+    <div class="row" style="margin-top:10px;">
+      <span class="hint" style="margin:0">难度：</span>
+      <button class="diffBtn" data-d="easy">简单</button>
+      <button class="diffBtn" data-d="medium">中等</button>
+      <button class="diffBtn" data-d="hard">困难</button>
+      <button class="diffBtn" data-d="expert">特难(余厌)</button>
+    </div>
     <div id="lobbyMsg" class="hint">玩法：点「单人练习」直接和电脑下；和朋友玩：你「创建房间」→ 把出现的房间码发给朋友 → 朋友「加入房间」输入该码。</div>
     <div id="roomCode" class="hidden"></div>
     <div class="hint" id="shareHint"></div>
@@ -180,6 +187,27 @@ document.getElementById('resetScoreBtn').addEventListener('click', () => {
   oppScore = { w: 0, d: 0, l: 0 };
   saveScore(); renderScore(); sendScore();
 });
+
+// ---------- 难度选择：简单 / 中等 / 困难 / 特难(余厌) ----------
+let difficulty = 'medium';
+try { const s = localStorage.getItem('gomokuP2pDiff'); if (s) difficulty = s; } catch (e) {}
+const DIFF_LABEL = { easy: '简单', medium: '中等', hard: '困难', expert: '特难(余厌)' };
+function diffLabel() { return DIFF_LABEL[difficulty] || '中等'; }
+function renderDiff() {
+  document.querySelectorAll('.diffBtn').forEach(b => {
+    b.style.background = b.dataset.d === difficulty ? 'var(--brand)' : '#334155';
+    b.style.color = b.dataset.d === difficulty ? '#06202e' : 'var(--text)';
+  });
+}
+document.querySelectorAll('.diffBtn').forEach(b => {
+  b.addEventListener('click', () => {
+    difficulty = b.dataset.d;
+    try { localStorage.setItem('gomokuP2pDiff', difficulty); } catch (e) {}
+    renderDiff();
+    if (solo && !gameOver) setConn('dot-live', '难度已切换：' + diffLabel() + '（轮到你落子）');
+  });
+});
+renderDiff();
 
 // ---------- drawing (same as tested version) ----------
 function drawBoard() {
@@ -335,20 +363,55 @@ function startSolo() {
   scoredGame = false;
   playing = true; gameOver = false; winLine = []; lastMove = null; myRematch = oppRematch = false;
   clearBoard(); drawBoard();
-  setConn('dot-live', '单人练习：你执黑先手（vs 简单电脑）');
+  setConn('dot-live', '单人练习（' + diffLabel() + '）：你执黑先手');
   document.getElementById('rematchBtn').classList.add('hidden');
+}
+// ---------- AI 难度：简单 / 中等 / 困难 / 特难(余厌) ----------
+function evalCell(r, c, color) {
+  // 评估在 (r,c) 放 color 棋子的价值（分方向数连子+开放端）
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  let total = 0;
+  for (const [dr, dc] of dirs) {
+    let cnt = 1, open = 0;
+    let nr = r + dr, nc = c + dc;
+    while (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === color) { cnt++; nr += dr; nc += dc; }
+    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === null) open++;
+    nr = r - dr; nc = c - dc;
+    while (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === color) { cnt++; nr -= dr; nc -= dc; }
+    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === null) open++;
+    if (cnt >= 5) total += 100000;
+    else if (cnt === 4) total += open >= 1 ? 10000 : 1000;
+    else if (cnt === 3) total += open >= 1 ? 1000 : 100;
+    else if (cnt === 2) total += open >= 1 ? 100 : 10;
+    else if (cnt === 1) total += open >= 1 ? 5 : 1;
+  }
+  return total;
+}
+function pickAiMove() {
+  const moves = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!board[r][c]) moves.push([r, c]);
+  if (!moves.length) return null;
+  const rnd = () => Math.random();
+  // 简单：70% 乱走；中等：20% 乱走
+  if (difficulty === 'easy' && rnd() < 0.7) return moves[Math.floor(rnd() * moves.length)];
+  if (difficulty === 'medium' && rnd() < 0.2) return moves[Math.floor(rnd() * moves.length)];
+  // 防守权重：特难最高（余厌模式，AI 又凶又死守）
+  const blockW = difficulty === 'expert' ? 1.25 : (difficulty === 'hard' ? 1.1 : 1.0);
+  const scored = moves.map(([r, c]) => ({ p: [r, c], s: evalCell(r, c, 'white') + blockW * evalCell(r, c, 'black') }));
+  scored.sort((a, b) => b.s - a.s);
+  // 困难：8% 概率在前3优中选（带点随机性，不机械）
+  if (difficulty === 'hard' && rnd() < 0.08) {
+    const top = Math.min(3, scored.length);
+    return scored[Math.floor(rnd() * top)].p;
+  }
+  return scored[0].p;
 }
 function aiMove() {
   if (!solo || gameOver || !playing) return;
-  const moves = [];
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!board[r][c]) moves.push([r, c]);
-  if (!moves.length) return;
-  let pick = null;
-  for (const [r, c] of moves) { board[r][c] = 'white'; if (checkWin(board, r, c, 'white')) pick = [r, c]; board[r][c] = null; if (pick) break; }
-  if (!pick) for (const [r, c] of moves) { board[r][c] = 'black'; if (checkWin(board, r, c, 'black')) pick = [r, c]; board[r][c] = null; if (pick) break; }
-  if (!pick) pick = moves[Math.floor(Math.random() * moves.length)];
+  const pick = pickAiMove();
+  if (!pick) return;
   applyMove(pick[0], pick[1], 'white', false);
-  if (!gameOver) setConn('dot-live', '单人练习：轮到你落子');
+  if (!gameOver) setConn('dot-live', '单人练习（' + diffLabel() + '）：轮到你落子');
 }
 
 function clearBoard() {
