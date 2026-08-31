@@ -128,7 +128,7 @@
 
   <!-- 特难通关庆祝弹窗 -->
   <div id="winModal" class="hidden" style="position:fixed;inset:0;background:rgba(5,10,20,.85);display:flex;align-items:center;justify-content:center;z-index:20;flex-direction:column;gap:14px;padding:20px;">
-    <h2 style="color:#fbbf24;font-size:22px;">🎉 特难通关！你赢了余厌！</h2>
+    <h2 id="winTitle" style="color:#fbbf24;font-size:22px;">🎉 特难通关！你赢了余厌！</h2>
     <img src="win.jpg" alt="通关庆祝" style="max-width:min(88vw,420px);border-radius:16px;border:3px solid #fbbf24;" />
     <button id="winCloseBtn" style="background:#fbbf24;color:#06202e;padding:10px 30px;font-size:16px;font-weight:700;">继续下棋</button>
   </div>
@@ -294,8 +294,11 @@ function applyMove(row, col, color, fromRemote) {
     document.getElementById('rematchBtn').classList.remove('hidden');
     document.getElementById('rematchBtn').disabled = false;
     if (!scoredGame) { addResult(color === myColor ? 'win' : 'loss'); }
-    // 特难(余厌)模式：玩家获胜 → 弹庆祝图
-    if (solo && difficulty === 'expert' && color === myColor) {
+    // 特难(余厌)模式：玩家获胜 → 弹庆祝图；玩家落败 → 弹嘲讽图
+    if (solo && difficulty === 'expert') {
+      const won = (color === myColor);
+      document.getElementById('winTitle').textContent = won ? '🎉 特难通关！你赢了余厌！' : '😏 你行不行啊杂鱼~ 连余厌都打不过';
+      document.getElementById('winCloseBtn').textContent = won ? '继续下棋' : '不服？再来一局';
       document.getElementById('winModal').classList.remove('hidden');
     }
     return;
