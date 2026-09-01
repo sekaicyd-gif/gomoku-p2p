@@ -105,8 +105,6 @@
     </div>
     <div class="row" style="margin-top:10px;">
       <span class="hint" style="margin:0">难度：</span>
-      <button class="diffBtn" data-d="easy">简单</button>
-      <button class="diffBtn" data-d="medium">中等</button>
       <button class="diffBtn" data-d="hard">困难</button>
       <button class="diffBtn" data-d="expert">特难(余厌)</button>
     </div>
@@ -195,11 +193,11 @@ document.getElementById('resetScoreBtn').addEventListener('click', () => {
   saveScore(); renderScore(); sendScore();
 });
 
-// ---------- 难度选择：简单 / 中等 / 困难 / 特难(余厌) ----------
-let difficulty = 'medium';
-try { const s = localStorage.getItem('gomokuP2pDiff'); if (s) difficulty = s; } catch (e) {}
-const DIFF_LABEL = { easy: '简单', medium: '中等', hard: '困难', expert: '特难(余厌)' };
-function diffLabel() { return DIFF_LABEL[difficulty] || '中等'; }
+// ---------- 难度选择：困难 / 特难(余厌) ----------
+let difficulty = 'hard';
+try { const s = localStorage.getItem('gomokuP2pDiff'); if (s === 'hard' || s === 'expert') difficulty = s; } catch (e) {}
+const DIFF_LABEL = { hard: '困难', expert: '特难(余厌)' };
+function diffLabel() { return DIFF_LABEL[difficulty] || '困难'; }
 function renderDiff() {
   document.querySelectorAll('.diffBtn').forEach(b => {
     b.style.background = b.dataset.d === difficulty ? 'var(--brand)' : '#334155';
@@ -297,6 +295,7 @@ function applyMove(row, col, color, fromRemote) {
     // 特难(余厌)模式：玩家获胜 → 弹庆祝图；玩家落败 → 弹嘲讽图
     if (solo && difficulty === 'expert') {
       const won = (color === myColor);
+      lastCelebration = won ? 'win' : 'loss';
       document.getElementById('winTitle').textContent = won ? '🎉 特难通关！你赢了余厌！' : '😏 你行不行啊杂鱼~ 连悠太都打不过';
       document.getElementById('winCloseBtn').textContent = won ? '继续下棋' : '不服？再来一局';
       document.getElementById('winModal').classList.remove('hidden');
@@ -421,19 +420,29 @@ function pickAiMove() {
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!board[r][c]) moves.push([r, c]);
   if (!moves.length) return null;
   const rnd = () => Math.random();
-  // 简单：70% 乱走；中等：20% 乱走
-  if (difficulty === 'easy' && rnd() < 0.7) return moves[Math.floor(rnd() * moves.length)];
-  if (difficulty === 'medium' && rnd() < 0.2) return moves[Math.floor(rnd() * moves.length)];
+  const stoneN = stoneCount();
   // 防守权重：特难最高（余厌模式，AI 又凶又死守）
-  const blockW = difficulty === 'expert' ? 1.25 : (difficulty === 'hard' ? 1.1 : 1.0);
+  const blockW = difficulty === 'expert' ? 1.35 : 1.1;
   const scored = moves.map(([r, c]) => ({ p: [r, c], s: evalCell(r, c, 'white') + blockW * evalCell(r, c, 'black') }));
   scored.sort((a, b) => b.s - a.s);
-  // 困难：8% 概率在前3优中选（带点随机性，不机械）
-  if (difficulty === 'hard' && rnd() < 0.08) {
-    const top = Math.min(3, scored.length);
-    return scored[Math.floor(rnd() * top)].p;
+  // 必胜/必堵：两种难度都必须执行（不随机）——能赢直接赢；对方要赢(堵点估值≥1.1×100000)也必堵
+  if (scored[0].s >= 100000) return scored[0].p;
+  const topScore = scored[0].s;
+  // 开局（白方前几手）：在较优的候选里随机，避免每次都下同一个点
+  if (stoneN <= 3) {
+    const topN = Math.min(6, scored.length);
+    return scored[Math.floor(rnd() * topN)].p;
   }
-  return scored[0].p;
+  // 困难：前5优里随机（下法多变，不固定套路）
+  if (difficulty === 'hard') {
+    const topN = Math.min(5, scored.length);
+    return scored[Math.floor(rnd() * topN)].p;
+  }
+  // 特难：在接近最优的候选里随机（前2优，几乎最强但非机械重复）
+  const topN = Math.min(2, scored.length);
+  // 若第一名明显强于第二名则必须选第一名
+  if (scored.length >= 2 && scored[0].s - scored[1].s > 100) return scored[0].p;
+  return scored[Math.floor(rnd() * topN)].p;
 }
 function aiMove() {
   if (!solo || gameOver || !playing) return;
@@ -537,8 +546,10 @@ function selfTest() {
 }
 document.getElementById('selfTestBtn').addEventListener('click', selfTest);
 document.getElementById('soloBtn').addEventListener('click', startSolo);
+let lastCelebration = 'win';   // 弹窗是赢('win')还是输('loss')触发的
 document.getElementById('winCloseBtn').addEventListener('click', () => {
   document.getElementById('winModal').classList.add('hidden');
+  if (lastCelebration === 'loss') { startSolo(); }   // 输了：点按钮直接开新局
 });
 
 const rematchBtn = document.getElementById('rematchBtn');
